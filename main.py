@@ -4,6 +4,7 @@ import os
 import numpy as np
 import time
 import torch
+import torch.nn as nn
 from torch import optim
 import visual_plt
 import utils
@@ -19,6 +20,7 @@ from continual_learner import ContinualLearner
 from exemplars import ExemplarHandler
 from replayer import Replayer
 from param_values import set_default_values
+from vgg import VGG16
 
 
 parser = argparse.ArgumentParser('./main.py', description='Run individual continual learning experiment.')
@@ -31,9 +33,9 @@ parser.add_argument('--results-dir', type=str, default='./results', dest='r_dir'
 
 # expirimental task parameters
 task_params = parser.add_argument_group('Task Parameters')
-task_params.add_argument('--experiment', type=str, default='splitMNIST', choices=['permMNIST', 'splitMNIST'])
+task_params.add_argument('--experiment', type=str, default='splitCIFAR10', choices=['permMNIST', 'splitMNIST', 'splitCIFAR10'])
 task_params.add_argument('--scenario', type=str, default='class', choices=['task', 'domain', 'class'])
-task_params.add_argument('--tasks', type=int, help='number of tasks')
+task_params.add_argument('--tasks', type=int, default=5, help='number of tasks')
 
 # specify loss functions to be used
 loss_params = parser.add_argument_group('Loss Parameters')
@@ -54,9 +56,11 @@ model_params.add_argument('--singlehead', action='store_true', help="for Task-IL
 # training hyperparameters / initialization
 train_params = parser.add_argument_group('Training Parameters')
 train_params.add_argument('--iters', type=int, help="# batches to optimize solver")
-train_params.add_argument('--lr', type=float, help="learning rate")
-train_params.add_argument('--batch', type=int, default=128, help="batch-size")
-train_params.add_argument('--optimizer', type=str, choices=['adam', 'adam_reset', 'sgd'], default='adam')
+train_params.add_argument('--lr', default=0.01, type=float, help="learning rate")
+train_params.add_argument('--batch', type=int, default=256, help="batch-size")
+train_params.add_argument('--optimizer', type=str, choices=['adam', 'adam_reset', 'sgd'], default='sgd')
+train_params.add_argument("--momentum", type=float, default=0.9, help="momentum value (default 0.9)")
+train_params.add_argument("--weight-decay", type=float, default=0.0001, help="weight decay value (default 0.0001)")
 
 # "memory replay" parameters
 replay_params = parser.add_argument_group('Replay Parameters')
@@ -113,7 +117,27 @@ eval_params.add_argument('--prec-n', type=int, default=1024, help="# samples for
 eval_params.add_argument('--sample-log', type=int, default=500, metavar="N", help="# iters after which to plot samples")
 eval_params.add_argument('--sample-n', type=int, default=64, help="# images to show")
 
+# NormOut settings
+normout_params = parser.add_argument_group('NormOut Settings')
+normout_params.add_argument("--no-abs", default=False, action="store_true", help="Don't use absolute value of input during NormOut (default False)")
+normout_params.add_argument("--normout-delay-epochs", type=int, default=0, help="number of epochs to delay using normout")
+normout_params.add_argument("--normalization-type", type=str, default="SpatiotemporalMax", help="type of normalization to use (default SpatiotemporalMax), supports SpatialMax, TemporalMax, SpatiotemporalMax")
+normout_params.add_argument("--temperature", type=int, default=1,help="Temperature to use in NormOut (default 1)")
 
+# VGG16 Settings
+vgg_params = parser.add_argument_group('VGG16 Settings')
+vgg_params.add_argument("--model", type=str, default="VGG16", help="Name of model to be used (default VGG16)")
+vgg_params.add_argument("--custom-layer-name", type=str, default=None, help="custom layer (default None, supports 'ReLU', 'NormOut', 'Dropout', 'SigmoidOut', and 'TopK')")
+vgg_params.add_argument("--dropout-p", type=float, default=0.5, help="p value for Dropout (probability of neuron being dropped)")
+vgg_params.add_argument("--no-batch-norm", default=False, action="store_true", help="Don't use batch norm (default False)")
+vgg_params.add_argument("--replace-layers", type=int, nargs="+", default=None, help="layer indices at which the layer is placed with the custom layer (NOTE: happens after removal and insertion)")
+vgg_params.add_argument("--remove-layers", type=int, nargs="+", default=None, help="layer indices at which the layer is removed from the model; give vals in ascending order")
+vgg_params.add_argument("--insert-layers", type=int, nargs="+", default=None, help="layer indices at which a custom layer is inserted (NOTE: happens after removal)")
+
+# Logging settings
+log_params = parser.add_argument_group('Logging Settings')
+log_params.add_argument("--log-sparsity", default=False, action="store_true", help="Log sparsity")
+log_params.add_argument("--log-input-stats", default=False, action="store_true", help="Log input stats")
 
 def run(args, verbose=False):
 
@@ -209,28 +233,56 @@ def run(args, verbose=False):
     #------------------------------#
 
     # Define main model (i.e., classifier, if requested with feedback connections)
-    if args.feedback:
-        model = AutoEncoder(
+    
+    # if args.feedback:
+    #     model = AutoEncoder(
+    #         image_size=config['size'], image_channels=config['channels'], classes=config['classes'],
+    #         fc_layers=args.fc_lay, fc_units=args.fc_units, z_dim=args.z_dim,
+    #         fc_drop=args.fc_drop, fc_bn=True if args.fc_bn=="yes" else False, fc_nl=args.fc_nl,
+    #     ).to(device)
+    #     model.lamda_pl = 1. #--> to make that this VAE is also trained to classify
+    # else:
+    #     model = Classifier(
+    #         image_size=config['size'], image_channels=config['channels'], classes=config['classes'],
+    #         fc_layers=args.fc_lay, fc_units=args.fc_units, fc_drop=args.fc_drop, fc_nl=args.fc_nl,
+    #         fc_bn=True if args.fc_bn=="yes" else False, excit_buffer=True if args.xdg and args.gating_prop>0 else False,
+    #         binaryCE=args.bce, binaryCE_distill=args.bce_distill, AGEM=args.agem,
+    #     ).to(device)
+    
+    if args.model == "VGG16":
+        if args.custom_layer_name is None:
+            custom_layer = None
+        elif args.custom_layer_name == "Dropout":
+            custom_layer = CustomDropout(args.dropout_p, log_sparsity_bool=args.log_sparsity, log_stats_bool=args.log_stats)
+        elif args.custom_layer_name == "NormOut":
+            custom_layer = NormOut(args.normalization_type, log_sparsity_bool=args.log_sparsity, log_stats_bool=args.log_stats, use_abs=(not args.no_abs))
+        else:
+            raise ValueError("custom_layer_name must be 'Dropout', 'NormOut', or 'None'")
+
+        model = VGG16(
             image_size=config['size'], image_channels=config['channels'], classes=config['classes'],
-            fc_layers=args.fc_lay, fc_units=args.fc_units, z_dim=args.z_dim,
-            fc_drop=args.fc_drop, fc_bn=True if args.fc_bn=="yes" else False, fc_nl=args.fc_nl,
-        ).to(device)
-        model.lamda_pl = 1. #--> to make that this VAE is also trained to classify
-    else:
+            use_batch_norm=(not args.no_batch_norm), dropout_p=args.dropout_p, remove_layers=args.remove_layers, 
+            insert_layers=args.insert_layers, replace_layers=args.replace_layers, custom_layer=custom_layer
+            ).to(device)
+
+    elif args.model == "Classifier":
         model = Classifier(
             image_size=config['size'], image_channels=config['channels'], classes=config['classes'],
             fc_layers=args.fc_lay, fc_units=args.fc_units, fc_drop=args.fc_drop, fc_nl=args.fc_nl,
             fc_bn=True if args.fc_bn=="yes" else False, excit_buffer=True if args.xdg and args.gating_prop>0 else False,
             binaryCE=args.bce, binaryCE_distill=args.bce_distill, AGEM=args.agem,
         ).to(device)
+    else:
+        raise NotImplementedError("Model name not specified")
+
 
     # Define optimizer (only include parameters that "requires_grad")
     model.optim_list = [{'params': filter(lambda p: p.requires_grad, model.parameters()), 'lr': args.lr}]
     model.optim_type = args.optimizer
     if model.optim_type in ("adam", "adam_reset"):
         model.optimizer = optim.Adam(model.optim_list, betas=(0.9, 0.999))
-    elif model.optim_type=="sgd":
-        model.optimizer = optim.SGD(model.optim_list)
+    elif model.optim_type == "sgd":
+        model.optimizer =  optim.SGD(model.optim_list, momentum=args.momentum, weight_decay=args.weight_decay)
     else:
         raise ValueError("Unrecognized optimizer, '{}' is not currently a valid option".format(args.optimizer))
 
@@ -324,12 +376,14 @@ def run(args, verbose=False):
     #---------------------#
 
     # Get parameter-stamp (and print on screen)
+    
     if verbose:
         print("\nParameter-stamp...")
-    param_stamp = get_param_stamp(
-        args, model.name, verbose=verbose, replay=True if (not args.replay=="none") else False,
-        replay_model_name=generator.name if (args.replay=="generative" and not args.feedback) else None,
-    )
+        param_stamp = get_param_stamp(
+            args, model.name, verbose=verbose, replay=True if (not args.replay=="none") else False,
+            replay_model_name=generator.name if (args.replay=="generative" and not args.feedback) else None,
+        )
+    
 
     # Print some model-characteristics on the screen
     if verbose:
@@ -338,6 +392,7 @@ def run(args, verbose=False):
         # -generator
         if generator is not None:
             utils.print_model_info(generator, title="GENERATOR")
+    
 
     # Prepare for keeping track of statistics required for metrics (also used for plotting in pdf)
     if args.pdf or args.metrics:

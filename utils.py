@@ -234,5 +234,18 @@ class Flatten(nn.Module):
         tmpstr = self.__class__.__name__ + '()'
         return tmpstr
 
+def replace_custom_layer(self, layers, i, replace_with=None):
+            if replace_with is not None:
+                layer = copy.copy(replace_with)
+            else:
+                layer = copy.copy(self.custom_layer)
+            print(f"{layers[i]} at index {i} replaced with {self.custom_layer_name}")
+            layer.set_index(i)
+            layers[i] = layer
 
+def insert_custom_layer(self, layers, i):
+    print(f"{self.custom_layer_name} inserted at index {i}")
+    layer = copy.copy(self.custom_layer)
+    layer.set_index(i)
+    layers.insert(i, layer)
 ##-------------------------------------------------------------------------------------------------------------------##
