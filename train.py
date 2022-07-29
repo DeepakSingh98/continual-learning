@@ -252,6 +252,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="class",classes
                 for loss_cb in loss_cbs:
                     if loss_cb is not None:
                         loss_cb(progress, batch_index, loss_dict, task=task)
+                #import ipdb; ipdb.set_trace()
                 for eval_cb in eval_cbs:
                     if eval_cb is not None:
                         eval_cb(model, batch_index, task=task)

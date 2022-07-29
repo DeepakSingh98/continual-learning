@@ -5,6 +5,9 @@ from torch.utils.data import ConcatDataset, Dataset
 import torch
 
 
+preprocess_means = [0.4914, 0.4822, 0.4465]
+preprocess_stds = [0.2023, 0.1994, 0.2010]
+
 def _permutate_image_pixels(image, permutation):
     '''Permutate the pixels of an image according to [permutation].
 
@@ -35,8 +38,13 @@ def get_dataset(name, type='train', download=True, capacity=None, permutation=No
     ])
 
     # load data-set
+    test_transforms_cifar = transforms.Compose([
+                                    transforms.ToTensor(),
+                                    transforms.Normalize(mean=preprocess_means,
+                                                         std=preprocess_stds)
+                                ])
     dataset = dataset_class('{dir}/{name}'.format(dir=dir, name=data_name), train=False if type=='test' else True,
-                            download=download, transform=dataset_transform, target_transform=target_transform)
+                            download=download, transform=test_transforms_cifar if type=='test' else dataset_transform, target_transform=target_transform)
 
     # print information about dataset on the screen
     if verbose:
@@ -145,9 +153,6 @@ AVAILABLE_DATASETS = {
     'mnist': datasets.MNIST,
     'cifar10': datasets.CIFAR10,
 }
-
-preprocess_means = [0.4914, 0.4822, 0.4465]
-preprocess_stds = [0.2023, 0.1994, 0.2010]
 
 # specify available transforms.
 AVAILABLE_TRANSFORMS = {

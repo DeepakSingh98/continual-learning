@@ -58,7 +58,5 @@ class NormOut(nn.Module, CustomLayer):
 
         if self.log_sparsity_bool:
             self.log_sparsity(x)
-        
-        self.log_stats(x)
 
         return x

@@ -21,6 +21,9 @@ from exemplars import ExemplarHandler
 from replayer import Replayer
 from param_values import set_default_values
 from vgg import VGG16
+from custom_layers.custom_layer import CustomLayer
+from custom_layers.custom_dropout import CustomDropout
+from custom_layers.normout import NormOut
 
 
 parser = argparse.ArgumentParser('./main.py', description='Run individual continual learning experiment.')
@@ -98,7 +101,7 @@ cl_params.add_argument('--gating-prop', type=float, metavar="PROP", help="--> Xd
 # data storage ('exemplars') parameters
 store_params = parser.add_argument_group('Data Storage Parameters')
 store_params.add_argument('--icarl', action='store_true', help="bce-distill, use-exemplars & add-exemplars")
-store_params.add_argument('--use-exemplars', action='store_true', help="use exemplars for classification")
+store_params.add_argument('--use-exemplars', default=False, action='store_true', help="use exemplars for classification")
 store_params.add_argument('--add-exemplars', action='store_true', help="add exemplars to current task's training set")
 store_params.add_argument('--budget', type=int, default=1000, dest="budget", help="how many samples can be stored?")
 store_params.add_argument('--herding', action='store_true', help="use herding to select stored data (instead of random)")
@@ -107,7 +110,7 @@ store_params.add_argument('--norm-exemplars', action='store_true', help="normali
 # evaluation parameters
 eval_params = parser.add_argument_group('Evaluation Parameters')
 eval_params.add_argument('--time', action='store_true', help="keep track of total training time")
-eval_params.add_argument('--metrics', action='store_true', help="calculate additional metrics (e.g., BWT, forgetting)")
+eval_params.add_argument('--metrics', default=True, action='store_true', help="calculate additional metrics (e.g., BWT, forgetting)")
 eval_params.add_argument('--pdf', action='store_true', help="generate pdf with results")
 eval_params.add_argument('--visdom', action='store_true', help="use visdom for on-the-fly plots")
 eval_params.add_argument('--log-per-task', action='store_true', help="set all visdom-logs to [iters]")
@@ -137,7 +140,7 @@ vgg_params.add_argument("--insert-layers", type=int, nargs="+", default=None, he
 # Logging settings
 log_params = parser.add_argument_group('Logging Settings')
 log_params.add_argument("--log-sparsity", default=False, action="store_true", help="Log sparsity")
-log_params.add_argument("--log-input-stats", default=False, action="store_true", help="Log input stats")
+log_params.add_argument("--log-stats", default=False, action="store_true", help="Log input stats")
 
 def run(args, verbose=False):
 
@@ -272,6 +275,14 @@ def run(args, verbose=False):
             fc_bn=True if args.fc_bn=="yes" else False, excit_buffer=True if args.xdg and args.gating_prop>0 else False,
             binaryCE=args.bce, binaryCE_distill=args.bce_distill, AGEM=args.agem,
         ).to(device)
+        
+    elif args.model == "VAE":
+            model = AutoEncoder(
+                image_size=config['size'], image_channels=config['channels'], classes=config['classes'],
+                fc_layers=args.fc_lay, fc_units=args.fc_units, z_dim=args.z_dim,
+            fc_drop=args.fc_drop, fc_bn=True if args.fc_bn=="yes" else False, fc_nl=args.fc_nl,
+            ).to(device)
+            model.lamda_pl = 1. #--> to make that this VAE is also trained to classify
     else:
         raise NotImplementedError("Model name not specified")
 
@@ -455,7 +466,7 @@ def run(args, verbose=False):
         cb._eval_cb(log=args.prec_log, test_datasets=test_datasets, visdom=visdom,
                     iters_per_task=args.iters, test_size=args.prec_n, classes_per_task=classes_per_task,
                     scenario=scenario, with_exemplars=False)
-    ] if (not args.use_exemplars) else [None]
+    ] # if (not args.use_exemplars) else [None]
     #--> during training on a task, evaluation cannot be with exemplars as those are only selected after training
     #    (instead, evaluation for visdom is only done after each task, by including callback-function into [metric_cbs])
 

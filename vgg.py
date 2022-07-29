@@ -4,9 +4,6 @@ from torch.nn import functional as F
 import utils
 from replayer import Replayer
 from linear_nets import fc_layer
-from custom_layers.custom_layer import CustomLayer
-from custom_layers.custom_dropout import CustomDropout
-from custom_layers.normout import NormOut
 
 def get_customized_vgg16_layers(
         in_channels, 
@@ -16,7 +13,8 @@ def get_customized_vgg16_layers(
         remove_layers=None, 
         insert_layers=None, 
         replace_layers=None, 
-        custom_layer=None
+        custom_layer=None,
+        model=None,
     ):
     """
     Returns a customized list of the layers in VGG16.
@@ -64,11 +62,11 @@ def get_customized_vgg16_layers(
     if custom_layer is not None and insert_layers is not None:
         print("Layer insertions:")
         for i in insert_layers:
-            utils.insert_custom_layer(layers, i)
+            utils.insert_custom_layer(custom_layer, layers, i)
     
     if custom_layer is not None and replace_layers is not None:
         for i in replace_layers:
-            utils.replace_custom_layer(layers, i)
+            utils.replace_custom_layer(custom_layer, layers, i)
 
     return layers
 
@@ -149,9 +147,6 @@ class VGG16(Replayer):
             replace_layers=replace_layers, 
             custom_layer=custom_layer
         )
-        print(f"VGG16 Arhcitecture:\n")
-        for layer in layers:
-            print(layer)
         self.net = nn.Sequential(*layers)
 
     @property
