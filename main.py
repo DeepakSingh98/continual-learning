@@ -111,7 +111,7 @@ store_params.add_argument('--norm-exemplars', action='store_true', help="normali
 eval_params = parser.add_argument_group('Evaluation Parameters')
 eval_params.add_argument('--time', action='store_true', help="keep track of total training time")
 eval_params.add_argument('--metrics', default=True, action='store_true', help="calculate additional metrics (e.g., BWT, forgetting)")
-eval_params.add_argument('--pdf', action='store_true', help="generate pdf with results")
+eval_params.add_argument('--pdf', default=True, action='store_true', help="generate pdf with results")
 eval_params.add_argument('--visdom', action='store_true', help="use visdom for on-the-fly plots")
 eval_params.add_argument('--log-per-task', action='store_true', help="set all visdom-logs to [iters]")
 eval_params.add_argument('--loss-log', type=int, default=200, metavar="N", help="# iters after which to plot loss")
